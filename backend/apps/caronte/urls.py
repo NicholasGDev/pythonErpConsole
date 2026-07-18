@@ -1,9 +1,9 @@
 # backend/apps/caronte/urls.py
 from django.urls import path
-from apps.caronte.views.auth_views import (
-    LoginView, RefreshView, LogoutView, InvalidateAllTokensView
+from apps.caronte.views import (
+    LoginView, RefreshView, LogoutView, InvalidateAllTokensView,
+    UserListView, UserDetailView,
 )
-from apps.caronte.views.user_views import UserListView, UserDetailView
 
 urlpatterns = [
     # Auth
