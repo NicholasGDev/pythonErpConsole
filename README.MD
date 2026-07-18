@@ -1,5 +1,3 @@
-
-```markdown
 # Caronte Architecture Blueprint
 
 This document details the software architecture, database design, and structure for the **Caronte** project. 
