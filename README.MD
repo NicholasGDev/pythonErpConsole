@@ -12,11 +12,11 @@ This sequence diagram illustrates how the Front-end (Next.js) interacts with the
 sequenceDiagram
     autonumber
     actor User
-    participant Front as "Frontend"
-    participant CORS as "CORS Middleware"
-    participant View as "View/Router"
-    participant Service as "Service Layer"
-    participant Model as "Model/DB"
+    participant Front as Frontend
+    participant CORS as CORS_Middleware
+    participant View as View_Router
+    participant Service as Service_Layer
+    participant Model as Model_DB
 
     User->>Front: Inputs credentials and clicks Login
     Front->>CORS: POST /api/auth/login/ JSON
@@ -43,7 +43,6 @@ sequenceDiagram
         Front->>Front: Stores tokens in Cookies
         Front-->>User: Redirects to Dashboard
     end
-
 ```
 
 ---
