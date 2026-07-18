@@ -1,6 +1,8 @@
 # Caronte Architecture Blueprint
 
-This document details the software architecture, database design, and structure for the **Caronte** project. 
+This document details the software architecture, database design, API reference, and structure for the **Caronte** project.
+
+---
 
 ## 🛠️ System Architecture (UML Sequence)
 
@@ -12,6 +14,7 @@ sequenceDiagram
     actor User
     participant Front as Frontend
     participant CORS as CORS_Middleware
+    participant JWT as CaronteJWTAuthentication
     participant View as View_Router
     participant Service as Service_Layer
     participant Model as Model_DB
@@ -20,26 +23,43 @@ sequenceDiagram
     Front->>CORS: POST /api/auth/login/ JSON
 
     alt Unauthorized Origin
-        CORS-->>Front: Blocks request CORS Error
+        CORS-->>Front: Blocks request — CORS Error
     else Valid Origin
         CORS->>View: Forwards request
     end
 
-    View->>Service: authenticate_user username password
+    View->>Service: AuthService.login(email, password, ip)
 
-    Service->>Model: Queries user from DB
+    Service->>Model: Queries User + AccessControl from DB
     Model-->>Service: Returns user data
 
-    alt Invalid Credentials
+    alt Account locked
+        Service-->>View: Raises PermissionDenied
+        View-->>Front: Returns 403 Forbidden
+        Front-->>User: Displays lockout message
+    else Invalid Credentials
+        Service->>Model: Increments failed_login_attempts
         Service-->>View: Raises AuthenticationFailed
         View-->>Front: Returns 401 Unauthorized
-        Front-->>User: Displays Invalid username or password
+        Front-->>User: Displays invalid credentials message
     else Correct Credentials
-        Service->>Service: Generates JWT Token Pair
-        Service-->>View: Returns tokens
+        Service->>Model: Resets failed_login_attempts, updates last_login_ip
+        Service->>Service: Generates JWT pair with jwt_token_version claim
+        Service-->>View: Returns access + refresh tokens
         View-->>Front: Returns 200 OK + Tokens JSON
-        Front->>Front: Stores tokens in Cookies
+        Front->>Front: Stores tokens in Cookies / Memory
         Front-->>User: Redirects to Dashboard
+    end
+
+    Note over Front,JWT: Subsequent authenticated requests
+    Front->>JWT: Any request with Authorization Bearer token
+    JWT->>JWT: Validates signature and expiry (simplejwt)
+    JWT->>Model: Compares jwt_token_version in token vs DB
+    alt Token version mismatch (revoked)
+        JWT-->>Front: Returns 401 — Token revogado
+    else Valid token
+        JWT->>View: Passes authenticated user
+        View-->>Front: Returns requested resource
     end
 ```
 
@@ -48,12 +68,6 @@ sequenceDiagram
 ## 📊 Database Design (Entity-Relationship Diagram)
 
 The data models have been optimized for relational structures and support both **MySQL** and **PostgreSQL** architectures natively through Django ORM.
-
-### Suggested Improvements Added:
-
-* `is_active` / `is_staff`: Standard Django user management flags.
-* `last_login_ip`: Auditing parameter to block suspicious login patterns.
-* `updated_at` / `created_at`: Standard timestamp fields for database integrity.
 
 ```mermaid
 erDiagram
@@ -66,7 +80,7 @@ erDiagram
         boolean is_staff
         boolean force_password_change
         boolean generic_password_in_use
-        char(36) jwt_token_version "Used to invalidate tokens globally if needed"
+        char(36) jwt_token_version "Rotated to globally invalidate all tokens"
         datetime date_joined
         datetime created_at
         datetime updated_at
@@ -78,9 +92,8 @@ erDiagram
         varchar(100) city
         varchar(100) country
         varchar(255) address
-        char(11) cpf UK "Optional / Localized Tax ID"
-        char(14) cnpj UK "Optional / Localized Company Tax ID"
-        varchar(20) cell_phone
+        varchar(20) phone_number
+        date date_of_birth
         datetime created_at
         datetime updated_at
     }
@@ -107,274 +120,294 @@ erDiagram
     User ||--|| UserData : "has profile details"
     User ||--|| AccessControl : "tracked by security controls"
     User ||--o{ PasswordReset : "requests zero or many resets"
-
 ```
 
 ---
 
 ## 📂 Backend Directory Structure
 
-To fulfill the MV (Model-View) pattern and integrate dedicated services, the structure for the **Caronte** application is defined as follows:
-
 ```text
-caronte_backend/
+backend/
 │
 ├── core/
 │   ├── __init__.py
-│   ├── settings.py
-│   ├── urls.py
+│   ├── settings.py           # Django settings — JWT, REST_FRAMEWORK, CORS, AUTH_USER_MODEL
+│   ├── urls.py               # Root URL conf — includes apps.caronte.urls under /api/
+│   ├── asgi.py
 │   └── wsgi.py
 │
 ├── apps/
 │   └── caronte/
 │       ├── __init__.py
 │       ├── apps.py
-│       ├── serializers.py
-│       ├── urls.py
+│       ├── authentication.py  # 🔐 CaronteJWTAuthentication — validates jwt_token_version
+│       ├── serializers.py     # LoginSerializer, UserSerializer, CreateUserSerializer
+│       ├── urls.py            # All app routes — auth + users
 │       │
-│       ├── models/               # 🗄️ Pacote de Modelos (DB Schemas)
-│       │   ├── __init__.py       # Expõe os modelos para o Django
-│       │   ├── user.py           # Ex: Modelo de Usuário personalizado
-│       │   └── user_data.py      # Ex: Modelo de dados complementares
-│       │
-│       ├── views/                # 🎮 Pacote de Controllers (HTTP Handlers)
-│       │   ├── __init__.py       # Centraliza ou apenas registra as views
-│       │   ├── auth_views.py     # Endpoints de login/logout/token
-│       │   └── user_views.py     # Endpoints de cadastro/perfil
-│       │
-│       ├── tests/                # 🧪 Pacote de Testes Automatizados
+│       ├── models/            # 🗄️ DB Schemas
 │       │   ├── __init__.py
-│       │   ├── test_auth.py      # Testes para a lógica de autenticação
-│       │   └── test_user.py      # Testes para o fluxo de usuários
+│       │   ├── user.py           # Custom AbstractBaseUser
+│       │   ├── user_data.py      # Profile data (One-to-One)
+│       │   ├── access_control.py # Login security controls (One-to-One)
+│       │   └── password_reset.py # Password reset tokens (One-to-Many)
 │       │
-│       └── services/             # 🧠 Camada de Regras de Negócio Puras
-│           ├── __init__.py
-│           ├── auth_service.py
-│           └── user_service.py
+│       ├── migrations/
+│       │   ├── __init__.py
+│       │   └── 0001_initial.py
+│       │
+│       ├── views/             # 🎮 HTTP Handlers (thin — delegates to services)
+│       │   ├── __init__.py
+│       │   ├── auth_views.py     # Login, Refresh, Logout, InvalidateAllTokens
+│       │   └── user_views.py     # UserListView, UserDetailView (CRUD)
+│       │
+│       ├── services/          # 🧠 Business Logic Layer
+│       │   ├── __init__.py
+│       │   ├── auth_service.py   # JWT login/logout/refresh/revoke logic
+│       │   └── user_service.py   # Full User CRUD + AccessControl + PasswordReset
+│       │
+│       ├── tests/
+│       │   ├── __init__.py
+│       │   ├── test_auth.py
+│       │   └── test_user.py
+│       │
+│       └── management/
+│           └── commands/
+│               └── seed_admin.py
 │
 └── manage.py
-
 ```
+
+---
+
+## 🌐 API Reference
+
+Base URL: `http://localhost:8000/api/`
+
+All protected endpoints require the header:
+```
+Authorization: Bearer <access_token>
+```
+
+### Authentication
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/auth/login/` | Public | Returns `access` + `refresh` tokens |
+| POST | `/api/auth/refresh/` | Public | Rotates refresh token, returns new pair |
+| POST | `/api/auth/logout/` | Required | Blacklists the refresh token |
+| POST | `/api/auth/invalidate-tokens/` | Required | Revokes all tokens across all devices |
+
+**Login request body:**
+```json
+{
+  "email": "user@example.com",
+  "password": "Senha@123"
+}
+```
+
+**Login response:**
+```json
+{
+  "access": "<jwt_access_token>",
+  "refresh": "<jwt_refresh_token>"
+}
+```
+
+### Users
+
+| Method | Endpoint | Auth | Permission | Description |
+|--------|----------|------|------------|-------------|
+| GET | `/api/users/` | Required | Admin only | List all active users |
+| POST | `/api/users/` | Required | Admin only | Create user + UserData + AccessControl |
+| GET | `/api/users/{id}/` | Required | Authenticated | Get user by ID |
+| PATCH | `/api/users/{id}/` | Required | Authenticated | Update user and/or UserData |
+| DELETE | `/api/users/{id}/` | Required | Authenticated | Hard delete user (CASCADE) |
+
+**Create user request body:**
+```json
+{
+  "name": "João Silva",
+  "email": "joao@caronte.com",
+  "password": "Senha@123",
+  "user_data": {
+    "city": "São Paulo",
+    "country": "Brasil",
+    "address": "Av. Paulista, 1000",
+    "phone_number": "11999990000",
+    "date_of_birth": "1990-05-15"
+  }
+}
+```
+
+**PATCH request body (partial update):**
+```json
+{
+  "name": "João Atualizado",
+  "user_data": {
+    "city": "Campinas"
+  }
+}
+```
+
+---
+
+## 🔐 JWT & Security Architecture
+
+### Token Claims
+
+Every access and refresh token issued contains:
+
+| Claim | Description |
+|-------|-------------|
+| `user_id` | Primary key of the user |
+| `jwt_token_version` | UUID rotated on global logout to invalidate all tokens |
+| `name` | User display name |
+| `email` | User email |
+
+### `CaronteJWTAuthentication`
+
+Located at `apps/caronte/authentication.py`. On every authenticated request it:
+
+1. Validates signature and expiry via `simplejwt` standard flow.
+2. Extracts `jwt_token_version` from the token payload.
+3. Compares it against `User.jwt_token_version` in the database.
+4. Rejects the request instantly if they differ — no waiting for token expiry.
+
+### Brute-force Lockout
+
+Configured in `settings.py`:
+
+```python
+AUTH_MAX_FAILED_ATTEMPTS = 5   # failed attempts before lockout
+AUTH_LOCKOUT_MINUTES     = 30  # lockout duration
+```
+
+`AccessControl` tracks `failed_login_attempts` and `lockout_until` per user. All lockout logic lives in `AuthService`.
 
 ---
 
 ## 🎯 Technical Requirements
 
-Make sure to initialize your environment installing the dependencies required to connect both **MySQL** or **PostgreSQL** interchangeably, alongside handling tokens and web permissions:
-
-1. **`djangorestframework`**: Turns Django into a robust REST API framework.
-2. **`django-cors-headers`**: Essential middleware allowing your Next.js application (`localhost:3000`) to communicate across origins to Django (`localhost:8000`).
-3. **`djangorestframework-simplejwt`**: Handles standard Json Web Token workflows natively.
-4. **`mysqlclient`**: Engine connector used if choosing **MySQL**.
-5. **`psycopg2-binary`**: Engine connector used if choosing **PostgreSQL**.
+| Package | Purpose |
+|---------|---------|
+| `django` | Web framework |
+| `djangorestframework` | REST API layer |
+| `djangorestframework-simplejwt` | JWT authentication + token blacklist |
+| `django-cors-headers` | CORS middleware for Next.js frontend |
+| `mysqlclient` | MySQL engine connector |
+| `psycopg2-binary` | PostgreSQL engine connector |
 
 ---
 
 ## 🚀 Local Setup Tutorial
 
-This tutorial covers the minimum steps to run the project locally on WSL Ubuntu, Ubuntu, Windows, and macOS.
-
 ### 1) Prerequisites
-
-Install these tools first:
 
 * Python 3.11 or newer
 * Node.js 18 or newer
-* npm or pnpm
 * Git
-* A database server: MySQL or PostgreSQL
-
-Recommended Python packages for the backend:
-
-* djangorestframework
-* django-cors-headers
-* djangorestframework-simplejwt
-* mysqlclient or psycopg2-binary, depending on the chosen database
+* MySQL or PostgreSQL server
 
 ### 2) Ubuntu / WSL Ubuntu
 
-Install system packages:
-
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-pip python3-venv python3-dev build-essential libpq-dev pkg-config git curl
-```
+sudo apt install -y python3 python3-pip python3-venv python3-dev build-essential pkg-config git curl
 
-If you will use MySQL, also install:
-
-```bash
+# MySQL
 sudo apt install -y default-libmysqlclient-dev
-```
 
-If you will use PostgreSQL, also install:
-
-```bash
+# PostgreSQL
 sudo apt install -y libpq-dev
-```
-
-Create and activate a virtual environment:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-```
-
-Install the backend dependencies:
-
-```bash
-pip install django djangorestframework django-cors-headers djangorestframework-simplejwt
-```
-
-Install the database driver that matches your database:
-
-```bash
-pip install mysqlclient
-```
-
-or:
-
-```bash
-pip install psycopg2-binary
 ```
 
 ### 3) Windows
 
-Install these tools:
-
-* Python from python.org, and enable "Add Python to PATH"
+* Python from python.org — enable "Add Python to PATH"
 * Git for Windows
-* Node.js LTS from nodejs.org
-* Visual Studio Build Tools or the C++ Build Tools workload if you use `mysqlclient`
-* MySQL or PostgreSQL desktop/server installer
-
-Create and activate the virtual environment:
+* Node.js LTS
+* Visual Studio Build Tools (required for `mysqlclient`)
 
 ```powershell
-py -3 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-```
-
-Install the backend dependencies:
-
-```powershell
-pip install django djangorestframework django-cors-headers djangorestframework-simplejwt
-```
-
-Install the driver:
-
-```powershell
-pip install mysqlclient
-```
-
-or:
-
-```powershell
-pip install psycopg2-binary
-```
-
-If PowerShell blocks script execution, run:
-
-```powershell
+# Allow scripts (run once)
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
 ### 4) macOS
 
-Install Homebrew first, then use it to install the base tools:
-
 ```bash
 brew install python git node pkg-config
-```
 
-If you will use PostgreSQL, install the client libraries:
+# MySQL
+brew install mysql-client
 
-```bash
+# PostgreSQL
 brew install libpq
 ```
 
-If you will use MySQL, install the client libraries:
+### 5) Backend setup (all platforms)
 
 ```bash
-brew install mysql-client
-```
-
-Create and activate the virtual environment:
-
-```bash
+# Inside /backend
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-```
 
-Install the backend dependencies:
-
-```bash
 pip install django djangorestframework django-cors-headers djangorestframework-simplejwt
-```
 
-Install the matching driver:
-
-```bash
-pip install psycopg2-binary
-```
-
-or:
-
-```bash
-pip install mysqlclient
-```
-
-### 5) Run the project locally
-
-After installing the dependencies, run the backend and frontend with the commands defined by your project structure.
-
-Typical Django commands:
-
-```bash
-python manage.py migrate
-python manage.py runserver
-```
-
-Typical Next.js commands:
-
-```bash
-npm install
-npm run dev
+# Choose one:
+pip install mysqlclient       # MySQL
+pip install psycopg2-binary   # PostgreSQL
 ```
 
 ### 6) Environment variables
 
-Create a `.env` file and configure at least:
+Configure `core/settings.py` for local dev:
 
-* `SECRET_KEY`
-* `DEBUG`
-* `ALLOWED_HOSTS`
-* `DATABASE_URL` or the equivalent database settings
-* `CORS_ALLOWED_ORIGINS`
-
-Example local CORS origin:
-
-```text
-http://localhost:3000
+```env
+SECRET_KEY=your-secret-key-here
+DEBUG=True
+ALLOWED_HOSTS=localhost,127.0.0.1
+CORS_ALLOWED_ORIGINS=http://localhost:3000
+AUTH_MAX_FAILED_ATTEMPTS=5
+AUTH_LOCKOUT_MINUTES=30
 ```
 
-### 7) Final verification
+### 7) Run the backend
 
-Check that:
+```bash
+cd backend
+source .venv/bin/activate
+python manage.py migrate
+python manage.py seed_admin    # creates initial admin user
+python manage.py runserver
+```
 
-* Django starts without migration errors
-* The database driver matches the selected database
-* The frontend can call the backend API on the configured CORS origin
+### 8) Run the frontend (Next.js)
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### 9) Test with Postman
+
+Import `Caronte.postman_collection.json` from the project root into Postman.
+
+The collection saves tokens automatically after Login and fills `{{user_id}}` after creating a user — run **Login** first and all other requests work immediately.
+
+### 10) Final verification
+
+* `http://localhost:8000/api/auth/login/` returns tokens
+* `http://localhost:3000` loads the frontend
+* Django admin available at `http://localhost:8000/admin/`
 
 ---
 
 ## ⚖️ Project License
 
 This project is open-source and licensed under the **GNU Lesser General Public License v3 (LGPLv3)**.
-
-### How LGPLv3 Works
 
 LGPLv3 lets you use this project in closed or open-source software, but if you modify the LGPL-covered code itself and distribute it, you must keep those modifications under the same license and provide the corresponding source code.
 
@@ -383,10 +416,5 @@ In practical terms:
 * You can link to the library from proprietary applications.
 * If you change the library code and distribute it, those changes must remain LGPLv3.
 * You must keep the license notice and copyright notices.
-* Users must be able to replace or relink the LGPL-covered component in dynamic-link scenarios.
 
 This is a summary for convenience only; the full LGPLv3 text controls the legal terms.
-
-```
-
-```
