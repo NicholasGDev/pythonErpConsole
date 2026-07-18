@@ -1,18 +1,8 @@
-Aqui está o conteúdo estruturado em formato Markdown (`.md`) pronto para você copiar e salvar no seu repositório. O diagrama foi adaptado para a sintaxe correta do Mermaid para diagramas de Entidade-Relacionamento (`erDiagram`), todas as colunas e descrições técnicas foram traduzidas para o inglês seguindo os padrões de boas práticas internacionais, e o escopo foi expandido incluindo o suporte a múltiplos bancos de dados (MySQL/PostgreSQL), a licença LGPLv3 e o nome oficial do app: **Caronte**.
-
-Para enriquecer o seu banco de dados, adicionei colunas cruciais de segurança e auditoria (como `is_active`, `is_staff` e controle de IP na tabela de acesso).
-
----
 
 ```markdown
 # Caronte Architecture Blueprint
 
 This document details the software architecture, database design, and structure for the **Caronte** project. 
-
-## ⚖️ Project License
-This project is open-source and licensed under the **GNU Lesser General Public License v3 (LGPLv3)**.
-
----
 
 ## 🛠️ System Architecture (UML Sequence)
 
@@ -52,7 +42,7 @@ sequenceDiagram
         Service->>Service: Generates JWT Token Pair (Access & Refresh)
         Service-->>View: Returns tokens
         View-->>Front: Returns 200 OK + Tokens (JSON)
-        Front Front: Stores tokens (Secure / HttpOnly Cookies)
+        Front->>Front: Stores tokens (Secure / HttpOnly Cookies)
         Front-->>User: Redirects to Dashboard
     end
 
@@ -73,51 +63,53 @@ The data models have been optimized for relational structures and support both *
 ```mermaid
 erDiagram
     User {
-        int id PK
-        string name
-        string email UK
-        string password
+        bigint id PK
+        varchar(150) name
+        varchar(254) email UK
+        varchar(128) password_hash
         boolean is_active
         boolean is_staff
         boolean force_password_change
         boolean generic_password_in_use
-        string jwt_token_version "Used to invalidate tokens globally if needed"
+        char(36) jwt_token_version "Used to invalidate tokens globally if needed"
         datetime date_joined
+        datetime created_at
         datetime updated_at
     }
 
     UserData {
-        int id PK
-        int user_id FK "One-to-One"
-        string city
-        string country
-        string address
-        string cpf UK "Optional / Localized Tax ID"
-        string cnpj UK "Optional / Localized Company Tax ID"
-        string cell_phone
+        bigint id PK
+        bigint user_id FK "One-to-One"
+        varchar(100) city
+        varchar(100) country
+        varchar(255) address
+        char(11) cpf UK "Optional / Localized Tax ID"
+        char(14) cnpj UK "Optional / Localized Company Tax ID"
+        varchar(20) cell_phone
         datetime created_at
         datetime updated_at
     }
 
     AccessControl {
-        int id PK
-        int user_id FK "One-to-One"
-        int failed_login_attempts
+        bigint id PK
+        bigint user_id FK "One-to-One"
+        smallint failed_login_attempts
         datetime lockout_until
-        string last_login_ip
+        varchar(45) last_login_ip
+        datetime last_login_at
         datetime updated_at
     }
 
     PasswordReset {
-        int id PK
-        int user_id FK "One-to-Many"
-        string reset_token UK
+        bigint id PK
+        bigint user_id FK "One-to-Many"
+        varchar(128) reset_token UK
         boolean is_used
         datetime expires_at
         datetime created_at
     }
 
-    User ||--|| UserData : "has profile profile details"
+    User ||--|| UserData : "has profile details"
     User ||--|| AccessControl : "tracked by security controls"
     User ||--o{ PasswordReset : "requests zero or many resets"
 
@@ -167,6 +159,212 @@ Make sure to initialize your environment installing the dependencies required to
 3. **`djangorestframework-simplejwt`**: Handles standard Json Web Token workflows natively.
 4. **`mysqlclient`**: Engine connector used if choosing **MySQL**.
 5. **`psycopg2-binary`**: Engine connector used if choosing **PostgreSQL**.
+
+---
+
+## 🚀 Local Setup Tutorial
+
+This tutorial covers the minimum steps to run the project locally on WSL Ubuntu, Ubuntu, Windows, and macOS.
+
+### 1) Prerequisites
+
+Install these tools first:
+
+* Python 3.11 or newer
+* Node.js 18 or newer
+* npm or pnpm
+* Git
+* A database server: MySQL or PostgreSQL
+
+Recommended Python packages for the backend:
+
+* djangorestframework
+* django-cors-headers
+* djangorestframework-simplejwt
+* mysqlclient or psycopg2-binary, depending on the chosen database
+
+### 2) Ubuntu / WSL Ubuntu
+
+Install system packages:
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-pip python3-venv python3-dev build-essential libpq-dev pkg-config git curl
+```
+
+If you will use MySQL, also install:
+
+```bash
+sudo apt install -y default-libmysqlclient-dev
+```
+
+If you will use PostgreSQL, also install:
+
+```bash
+sudo apt install -y libpq-dev
+```
+
+Create and activate a virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+```
+
+Install the backend dependencies:
+
+```bash
+pip install django djangorestframework django-cors-headers djangorestframework-simplejwt
+```
+
+Install the database driver that matches your database:
+
+```bash
+pip install mysqlclient
+```
+
+or:
+
+```bash
+pip install psycopg2-binary
+```
+
+### 3) Windows
+
+Install these tools:
+
+* Python from python.org, and enable "Add Python to PATH"
+* Git for Windows
+* Node.js LTS from nodejs.org
+* Visual Studio Build Tools or the C++ Build Tools workload if you use `mysqlclient`
+* MySQL or PostgreSQL desktop/server installer
+
+Create and activate the virtual environment:
+
+```powershell
+py -3 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+```
+
+Install the backend dependencies:
+
+```powershell
+pip install django djangorestframework django-cors-headers djangorestframework-simplejwt
+```
+
+Install the driver:
+
+```powershell
+pip install mysqlclient
+```
+
+or:
+
+```powershell
+pip install psycopg2-binary
+```
+
+If PowerShell blocks script execution, run:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+### 4) macOS
+
+Install Homebrew first, then use it to install the base tools:
+
+```bash
+brew install python git node pkg-config
+```
+
+If you will use PostgreSQL, install the client libraries:
+
+```bash
+brew install libpq
+```
+
+If you will use MySQL, install the client libraries:
+
+```bash
+brew install mysql-client
+```
+
+Create and activate the virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+```
+
+Install the backend dependencies:
+
+```bash
+pip install django djangorestframework django-cors-headers djangorestframework-simplejwt
+```
+
+Install the matching driver:
+
+```bash
+pip install psycopg2-binary
+```
+
+or:
+
+```bash
+pip install mysqlclient
+```
+
+### 5) Run the project locally
+
+After installing the dependencies, run the backend and frontend with the commands defined by your project structure.
+
+Typical Django commands:
+
+```bash
+python manage.py migrate
+python manage.py runserver
+```
+
+Typical Next.js commands:
+
+```bash
+npm install
+npm run dev
+```
+
+### 6) Environment variables
+
+Create a `.env` file and configure at least:
+
+* `SECRET_KEY`
+* `DEBUG`
+* `ALLOWED_HOSTS`
+* `DATABASE_URL` or the equivalent database settings
+* `CORS_ALLOWED_ORIGINS`
+
+Example local CORS origin:
+
+```text
+http://localhost:3000
+```
+
+### 7) Final verification
+
+Check that:
+
+* Django starts without migration errors
+* The database driver matches the selected database
+* The frontend can call the backend API on the configured CORS origin
+
+---
+
+## ⚖️ Project License
+
+This project is open-source and licensed under the **GNU Lesser General Public License v3 (LGPLv3)**.
 
 ```
 
