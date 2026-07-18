@@ -12,15 +12,15 @@ This sequence diagram illustrates how the Front-end (Next.js) interacts with the
 sequenceDiagram
     autonumber
     actor User as User (Browser)
-    participant Front as Front-end<br/>(Next.js + Shadcn UI)
-    participant CORS as CORS Middleware<br/>(Django)
-    participant View as View / Router<br/>(Django REST)
-    participant Service as Service Layer<br/>(auth_service.py)
-    participant Model as Model / DB<br/>(Django ORM)
+    participant Front as Front-end (Next.js + Shadcn UI)
+    participant CORS as CORS Middleware (Django)
+    participant View as View / Router (Django REST)
+    participant Service as Service Layer (auth_service.py)
+    participant Model as Model / DB (Django ORM)
 
     User->>Front: Inputs credentials and clicks "Login"
     Front->>CORS: POST /api/auth/login/ (JSON)
-    
+
     alt Unauthorized Origin?
         CORS-->>Front: Blocks request (CORS Error)
     else Valid Origin
@@ -28,11 +28,9 @@ sequenceDiagram
     end
 
     View->>Service: authenticate_user(username, password)
-    
-    critical Validate Credentials
-        Service->>Model: Queries user from DB
-        Model-->>Service: Returns user data
-    end
+
+    Service->>Model: Queries user from DB
+    Model-->>Service: Returns user data
 
     alt Invalid Credentials
         Service-->>View: Raises Exception (AuthenticationFailed)
@@ -365,6 +363,19 @@ Check that:
 ## ⚖️ Project License
 
 This project is open-source and licensed under the **GNU Lesser General Public License v3 (LGPLv3)**.
+
+### How LGPLv3 Works
+
+LGPLv3 lets you use this project in closed or open-source software, but if you modify the LGPL-covered code itself and distribute it, you must keep those modifications under the same license and provide the corresponding source code.
+
+In practical terms:
+
+* You can link to the library from proprietary applications.
+* If you change the library code and distribute it, those changes must remain LGPLv3.
+* You must keep the license notice and copyright notices.
+* Users must be able to replace or relink the LGPL-covered component in dynamic-link scenarios.
+
+This is a summary for convenience only; the full LGPLv3 text controls the legal terms.
 
 ```
 
