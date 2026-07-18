@@ -131,5 +131,5 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 # ─── Lockout config (usada no auth_service) ──────────────────────────────────
-AUTH_MAX_FAILED_ATTEMPTS = 5
-AUTH_LOCKOUT_MINUTES     = 30
+AUTH_LOCKOUT_THRESHOLD = 3    # tentativas antes do 1º bloqueio
+AUTH_LOCKOUT_STEP_SECS = 10   # segundos adicionados por falha (3→10s, 4→20s, 5→30s...)

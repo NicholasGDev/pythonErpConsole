@@ -1,8 +1,10 @@
 # backend/apps/caronte/services/auth_service.py
 import uuid
+from datetime import timedelta
 from django.conf import settings
 from django.utils import timezone
 from django.contrib.auth import authenticate
+from django.db.models import F
 
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
@@ -13,8 +15,8 @@ from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from apps.caronte.models import User, AccessControl
 
 
-MAX_ATTEMPTS    = getattr(settings, 'AUTH_MAX_FAILED_ATTEMPTS', 5)
-LOCKOUT_MINUTES = getattr(settings, 'AUTH_LOCKOUT_MINUTES', 30)
+LOCKOUT_THRESHOLD = getattr(settings, 'AUTH_LOCKOUT_THRESHOLD', 3)   # tentativas antes do 1º bloqueio
+LOCKOUT_STEP_SECS = getattr(settings, 'AUTH_LOCKOUT_STEP_SECS', 10)  # segundos adicionados por falha
 
 
 class AuthService:
@@ -48,12 +50,13 @@ class AuthService:
             AuthService._register_failed_attempt(ac)
             raise AuthenticationFailed('Credenciais inválidas.')
 
-        # 4. Login bem-sucedido — atualiza AccessControl
-        ac.failed_login_attempts = 0
-        ac.lockout_until          = None
-        ac.last_login_ip          = ip_address
-        ac.last_login_at          = timezone.now()
-        ac.save()
+        # 4. Login bem-sucedido — zera contadores no banco diretamente
+        AccessControl.objects.filter(pk=ac.pk).update(
+            failed_login_attempts=0,
+            lockout_until=None,
+            last_login_ip=ip_address,
+            last_login_at=timezone.now(),
+        )
 
         # 5. Gera tokens com claims customizados
         return AuthService._generate_tokens(user)
@@ -135,18 +138,28 @@ class AuthService:
 
     @staticmethod
     def _check_lockout(ac: AccessControl) -> None:
+        # Relê do banco para garantir o valor mais recente
+        ac.refresh_from_db(fields=['lockout_until'])
         if ac.lockout_until and ac.lockout_until > timezone.now():
-            remaining = int((ac.lockout_until - timezone.now()).total_seconds() / 60) + 1
+            remaining = int((ac.lockout_until - timezone.now()).total_seconds()) + 1
             raise PermissionDenied(
-                f'Conta bloqueada. Tente novamente em {remaining} minuto(s).'
+                f'Conta bloqueada. Tente novamente em {remaining} segundo(s).'
             )
 
     @staticmethod
     def _register_failed_attempt(ac: AccessControl) -> None:
-        ac.failed_login_attempts += 1
-        if ac.failed_login_attempts >= MAX_ATTEMPTS:
-            ac.lockout_until = timezone.now() + timezone.timedelta(minutes=LOCKOUT_MINUTES)
-        ac.save()
+        # Incremento atômico no banco via F() — sem race condition
+        AccessControl.objects.filter(pk=ac.pk).update(
+            failed_login_attempts=F('failed_login_attempts') + 1
+        )
+        ac.refresh_from_db(fields=['failed_login_attempts'])
+
+        if ac.failed_login_attempts >= LOCKOUT_THRESHOLD:
+            # Cada falha a partir da 3ª acrescenta +10s ao bloqueio
+            # Ex: 3 falhas → 10s | 4 → 20s | 5 → 30s ...
+            extra = ac.failed_login_attempts - (LOCKOUT_THRESHOLD - 1)
+            lockout_until = timezone.now() + timedelta(seconds=extra * LOCKOUT_STEP_SECS)
+            AccessControl.objects.filter(pk=ac.pk).update(lockout_until=lockout_until)
 
     @staticmethod
     def _generate_tokens(user: User) -> dict:

@@ -12,55 +12,89 @@ This sequence diagram illustrates how the Front-end (Next.js) interacts with the
 sequenceDiagram
     autonumber
     actor User
-    participant Front as Frontend
-    participant CORS as CORS_Middleware
+    participant Front as Frontend (Next.js)
+    participant CORS as CorsMiddleware
     participant JWT as CaronteJWTAuthentication
-    participant View as View_Router
-    participant Service as Service_Layer
-    participant Model as Model_DB
+    participant LV as LoginView
+    participant RV as RefreshView
+    participant LOV as LogoutView
+    participant ITV as InvalidateAllTokensView
+    participant ULV as UserListView
+    participant UDV as UserDetailView
+    participant AuthSvc as AuthService
+    participant UserSvc as UserService
+    participant Model as Model / DB
 
+    %% ── LOGIN FLOW ──────────────────────────────────────────────────
     User->>Front: Inputs credentials and clicks Login
     Front->>CORS: POST /api/auth/login/ JSON
 
     alt Unauthorized Origin
         CORS-->>Front: Blocks request — CORS Error
     else Valid Origin
-        CORS->>View: Forwards request
+        CORS->>LV: Forwards request
     end
 
-    View->>Service: AuthService.login(email, password, ip)
-
-    Service->>Model: Queries User + AccessControl from DB
-    Model-->>Service: Returns user data
+    LV->>LV: LoginSerializer.is_valid()
+    LV->>AuthSvc: AuthService.login(email, password, ip)
+    AuthSvc->>Model: Fetch User + AccessControl
+    Model-->>AuthSvc: Returns user data
 
     alt Account locked
-        Service-->>View: Raises PermissionDenied
-        View-->>Front: Returns 403 Forbidden
+        AuthSvc-->>LV: Raises PermissionDenied
+        LV-->>Front: 403 Forbidden
         Front-->>User: Displays lockout message
-    else Invalid Credentials
-        Service->>Model: Increments failed_login_attempts
-        Service-->>View: Raises AuthenticationFailed
-        View-->>Front: Returns 401 Unauthorized
+    else Invalid credentials
+        AuthSvc->>Model: Increment failed_login_attempts
+        AuthSvc-->>LV: Raises AuthenticationFailed
+        LV-->>Front: 401 Unauthorized
         Front-->>User: Displays invalid credentials message
-    else Correct Credentials
-        Service->>Model: Resets failed_login_attempts, updates last_login_ip
-        Service->>Service: Generates JWT pair with jwt_token_version claim
-        Service-->>View: Returns access + refresh tokens
-        View-->>Front: Returns 200 OK + Tokens JSON
+    else Correct credentials
+        AuthSvc->>Model: Reset failed_login_attempts, update last_login_ip
+        AuthSvc->>AuthSvc: Generate JWT pair (jwt_token_version claim)
+        AuthSvc-->>LV: {access, refresh}
+        LV-->>Front: 200 OK + tokens JSON
         Front->>Front: Stores tokens in Cookies / Memory
         Front-->>User: Redirects to Dashboard
     end
 
-    Note over Front,JWT: Subsequent authenticated requests
-    Front->>JWT: Any request with Authorization Bearer token
-    JWT->>JWT: Validates signature and expiry (simplejwt)
-    JWT->>Model: Compares jwt_token_version in token vs DB
-    alt Token version mismatch (revoked)
-        JWT-->>Front: Returns 401 — Token revogado
-    else Valid token
-        JWT->>View: Passes authenticated user
-        View-->>Front: Returns requested resource
+    %% ── TOKEN REFRESH FLOW ──────────────────────────────────────────
+    Note over Front,RV: Token refresh
+    Front->>RV: POST /api/auth/refresh/ {refresh}
+    RV->>AuthSvc: AuthService.refresh(refresh_token)
+    AuthSvc->>Model: Validate token + check jwt_token_version
+    alt Version mismatch or invalid
+        AuthSvc-->>RV: Raises AuthenticationFailed
+        RV-->>Front: 401 Unauthorized
+    else Valid
+        AuthSvc->>Model: Blacklist old refresh token
+        AuthSvc-->>RV: {access, refresh} (rotated)
+        RV-->>Front: 200 OK + new token pair
     end
+
+    %% ── AUTHENTICATED REQUEST FLOW ──────────────────────────────────
+    Note over Front,JWT: Every protected request
+    Front->>JWT: Authorization: Bearer <access_token>
+    JWT->>JWT: Validates signature and expiry (simplejwt)
+    JWT->>Model: Compare jwt_token_version in token vs DB
+    alt Version mismatch (globally revoked)
+        JWT-->>Front: 401 — Token revogado
+    else Valid token
+        JWT->>UDV: Passes authenticated user
+        UDV->>UserSvc: UserService.get/update/delete_user()
+        UserSvc->>Model: DB operation
+        Model-->>UserSvc: Returns data
+        UserSvc-->>UDV: User object
+        UDV-->>Front: 200 / 204 with payload
+    end
+
+    %% ── GLOBAL LOGOUT FLOW ──────────────────────────────────────────
+    Note over Front,ITV: Global logout (all devices)
+    Front->>ITV: POST /api/auth/invalidate-tokens/
+    ITV->>AuthSvc: AuthService.invalidate_all_tokens(user_id)
+    AuthSvc->>Model: Rotate jwt_token_version + blacklist all OutstandingTokens
+    AuthSvc-->>ITV: Done
+    ITV-->>Front: 200 OK — all tokens revoked
 ```
 
 ---
@@ -156,9 +190,15 @@ backend/
 │       │   └── 0001_initial.py
 │       │
 │       ├── views/             # 🎮 HTTP Handlers (thin — delegates to services)
-│       │   ├── __init__.py
-│       │   ├── auth_views.py     # Login, Refresh, Logout, InvalidateAllTokens
-│       │   └── user_views.py     # UserListView, UserDetailView (CRUD)
+│       │   ├── __init__.py          # re-exports all views
+│       │   ├── login_view.py        # LoginView — POST /api/auth/login/
+│       │   ├── refresh_view.py      # RefreshView — POST /api/auth/refresh/
+│       │   ├── logout_view.py       # LogoutView — POST /api/auth/logout/
+│       │   ├── invalidate_all_tokens_view.py  # InvalidateAllTokensView — POST /api/auth/invalidate-tokens/
+│       │   ├── user_list_view.py    # UserListView — GET + POST /api/users/
+│       │   ├── user_detail_view.py  # UserDetailView — GET + PATCH + DELETE /api/users/{id}/
+│       │   ├── auth_views.py        # (compat) re-exports auth views
+│       │   └── user_views.py        # (compat) re-exports user views
 │       │
 │       ├── services/          # 🧠 Business Logic Layer
 │       │   ├── __init__.py
@@ -168,6 +208,12 @@ backend/
 │       ├── tests/
 │       │   ├── __init__.py
 │       │   ├── test_auth.py
+│       │   ├── test_login_view.py
+│       │   ├── test_refresh_view.py
+│       │   ├── test_logout_view.py
+│       │   ├── test_invalidate_all_tokens_view.py
+│       │   ├── test_user_list_view.py
+│       │   ├── test_user_detail_view.py
 │       │   └── test_user.py
 │       │
 │       └── management/
