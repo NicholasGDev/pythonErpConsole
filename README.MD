@@ -11,36 +11,36 @@ This sequence diagram illustrates how the Front-end (Next.js) interacts with the
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as User (Browser)
-    participant Front as Front-end (Next.js + Shadcn UI)
-    participant CORS as CORS Middleware (Django)
-    participant View as View / Router (Django REST)
-    participant Service as Service Layer (auth_service.py)
-    participant Model as Model / DB (Django ORM)
+    actor User
+    participant Front as "Frontend"
+    participant CORS as "CORS Middleware"
+    participant View as "View/Router"
+    participant Service as "Service Layer"
+    participant Model as "Model/DB"
 
-    User->>Front: Inputs credentials and clicks "Login"
-    Front->>CORS: POST /api/auth/login/ (JSON)
+    User->>Front: Inputs credentials and clicks Login
+    Front->>CORS: POST /api/auth/login/ JSON
 
-    alt Unauthorized Origin?
-        CORS-->>Front: Blocks request (CORS Error)
+    alt Unauthorized Origin
+        CORS-->>Front: Blocks request CORS Error
     else Valid Origin
         CORS->>View: Forwards request
     end
 
-    View->>Service: authenticate_user(username, password)
+    View->>Service: authenticate_user username password
 
     Service->>Model: Queries user from DB
     Model-->>Service: Returns user data
 
     alt Invalid Credentials
-        Service-->>View: Raises Exception (AuthenticationFailed)
+        Service-->>View: Raises AuthenticationFailed
         View-->>Front: Returns 401 Unauthorized
-        Front-->>User: Displays "Invalid username or password"
+        Front-->>User: Displays Invalid username or password
     else Correct Credentials
-        Service->>Service: Generates JWT Token Pair (Access & Refresh)
+        Service->>Service: Generates JWT Token Pair
         Service-->>View: Returns tokens
-        View-->>Front: Returns 200 OK + Tokens (JSON)
-        Front->>Front: Stores tokens (Secure / HttpOnly Cookies)
+        View-->>Front: Returns 200 OK + Tokens JSON
+        Front->>Front: Stores tokens in Cookies
         Front-->>User: Redirects to Dashboard
     end
 
