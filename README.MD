@@ -119,25 +119,38 @@ To fulfill the MV (Model-View) pattern and integrate dedicated services, the str
 ```text
 caronte_backend/
 │
-├── core/                         # Global configuration directory
+├── core/
 │   ├── __init__.py
-│   ├── settings.py               # Configured for Multi-DB (MySQL/Postgres), CORS, and SimpleJWT
-│   ├── urls.py                   # Main routing file
+│   ├── settings.py
+│   ├── urls.py
 │   └── wsgi.py
 │
-├── apps/                         # App encapsulation directory
-│   └── caronte/                  # Main authentication & core app
+├── apps/
+│   └── caronte/
 │       ├── __init__.py
 │       ├── apps.py
-│       ├── models.py             # Contains database schemas and ORM mapping (User, UserData, etc.)
-│       ├── views.py              # Pure HTTP controller (handles requests, delegates to services)
-│       ├── serializers.py        # Validates incoming JSON data and formats outgoing JSON payloads
-│       ├── urls.py               # Localized endpoints for caronte app
+│       ├── serializers.py
+│       ├── urls.py
 │       │
-│       └── services/             # 🧠 Pure Business Logic Layer
+│       ├── models/               # 🗄️ Pacote de Modelos (DB Schemas)
+│       │   ├── __init__.py       # Expõe os modelos para o Django
+│       │   ├── user.py           # Ex: Modelo de Usuário personalizado
+│       │   └── user_data.py      # Ex: Modelo de dados complementares
+│       │
+│       ├── views/                # 🎮 Pacote de Controllers (HTTP Handlers)
+│       │   ├── __init__.py       # Centraliza ou apenas registra as views
+│       │   ├── auth_views.py     # Endpoints de login/logout/token
+│       │   └── user_views.py     # Endpoints de cadastro/perfil
+│       │
+│       ├── tests/                # 🧪 Pacote de Testes Automatizados
+│       │   ├── __init__.py
+│       │   ├── test_auth.py      # Testes para a lógica de autenticação
+│       │   └── test_user.py      # Testes para o fluxo de usuários
+│       │
+│       └── services/             # 🧠 Camada de Regras de Negócio Puras
 │           ├── __init__.py
-│           ├── auth_service.py   # User authentication, JWT generation, and login constraints
-│           └── user_service.py   # Handles password resets, user updates, and registrations
+│           ├── auth_service.py
+│           └── user_service.py
 │
 └── manage.py
 
