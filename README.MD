@@ -4,8 +4,6 @@ This document details the software architecture, database design, API reference,
 
 ---
 
-## 🛠️ System Architecture (UML Sequence)
-
 This sequence diagram illustrates how the Front-end (Next.js) interacts with the pure RESTful Django Back-end through the API layer, bypassing templates, handling CORS, and isolating business logic inside Services.
 
 ```mermaid
